@@ -4,11 +4,70 @@
 #  - Silencieux (tourne en arriere-plan)
 #  - Pas de redemarrage automatique
 #  - Les mises a jour s'appliquent au prochain redemarrage
+#
+#  Parametres :
+#    -RegisterStartup    Cree une tache planifiee qui lance ce
+#                        script a chaque demarrage du PC, puis quitte.
+#    -UnregisterStartup  Supprime cette tache planifiee, puis quitte.
+#
+#  Exemples :
+#    .\auto_update.ps1                     # execution immediate
+#    .\auto_update.ps1 -RegisterStartup    # activer au demarrage
+#    .\auto_update.ps1 -UnregisterStartup  # desactiver au demarrage
 # ============================================================
+
+param(
+    [switch]$RegisterStartup,
+    [switch]$UnregisterStartup
+)
 
 # ── Verification des droits admin ──────────────────────────
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
+    Write-Warning "Ce script doit etre lance en tant qu'Administrateur."
     Exit 1
+}
+
+# ── Nom de la tache planifiee (auto-demarrage) ─────────────
+$TaskName = "AutoWindowsUpdate-AtStartup"
+
+# ── Activer le lancement au demarrage ──────────────────────
+if ($RegisterStartup) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+
+    $action = New-ScheduledTaskAction -Execute "PowerShell.exe" `
+        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+
+    # Declenchement a chaque demarrage, avec 2 min de delai
+    # pour ne pas ralentir l'ouverture de session.
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $trigger.Delay = "PT2M"
+
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable
+
+    # Compte SYSTEM = droits admin, sans ouverture de session requise.
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" `
+        -LogonType ServiceAccount -RunLevel Highest
+
+    Register-ScheduledTask -TaskName $TaskName `
+        -Action $action -Trigger $trigger -Settings $settings `
+        -Principal $principal -Force | Out-Null
+
+    Write-Host "Tache '$TaskName' creee : le script se lancera a chaque demarrage."
+    Exit 0
+}
+
+# ── Desactiver le lancement au demarrage ───────────────────
+if ($UnregisterStartup) {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        Write-Host "Tache '$TaskName' supprimee : plus de lancement au demarrage."
+    } else {
+        Write-Host "Aucune tache '$TaskName' trouvee."
+    }
+    Exit 0
 }
 
 # ── Installation du module PSWindowsUpdate si absent ───────

@@ -26,6 +26,7 @@ Script PowerShell qui automatise l'installation des mises à jour Windows et des
 - **Sans redémarrage forcé** — les mises à jour attendent le prochain redémarrage manuel
 - **Language packs exclus** — évite les téléchargements inutiles
 - **Notification Windows** — alerte visuelle à la fin du processus
+- **Lancement au démarrage** — option intégrée pour s'exécuter à chaque démarrage du PC
 
 ---
 
@@ -50,6 +51,66 @@ Register-ScheduledTask -TaskName "AutoWindowsUpdate" `
   -Action $action -Trigger $trigger -Settings $settings `
   -RunLevel Highest -Force
 ```
+
+---
+
+## 🚀 Lancer le script à chaque démarrage
+
+Pour que le script s'exécute **automatiquement à chaque démarrage du PC**, le plus simple est d'utiliser l'option intégrée. Une seule commande à lancer **une fois**, dans un PowerShell **Administrateur** :
+
+```powershell
+.\auto_update.ps1 -RegisterStartup
+```
+
+Cela crée une tâche planifiée nommée `AutoWindowsUpdate-AtStartup` qui :
+
+- se déclenche **à chaque démarrage** de Windows ;
+- s'exécute avec le compte **SYSTEM** (droits admin, **sans** ouverture de session ni mot de passe) ;
+- démarre **2 minutes après le boot** pour ne pas ralentir l'ouverture de session ;
+- tourne **silencieusement** en arrière-plan.
+
+> ℹ️ Le chemin du script est enregistré tel quel au moment de la commande. Si vous déplacez `auto_update.ps1`, relancez `-RegisterStartup` depuis le nouvel emplacement.
+
+### Désactiver le lancement au démarrage
+
+```powershell
+.\auto_update.ps1 -UnregisterStartup
+```
+
+### Vérifier / gérer la tâche
+
+```powershell
+# Vérifier que la tâche existe
+Get-ScheduledTask -TaskName "AutoWindowsUpdate-AtStartup"
+
+# La lancer manuellement pour tester
+Start-ScheduledTask -TaskName "AutoWindowsUpdate-AtStartup"
+```
+
+Vous pouvez aussi la retrouver dans le **Planificateur de tâches** Windows (`taskschd.msc`), dans la bibliothèque des tâches.
+
+<details>
+<summary>Alternative : créer la tâche à la main (sans l'option intégrée)</summary>
+
+```powershell
+# À lancer une fois en tant qu'Administrateur
+$scriptPath = "C:\Scripts\auto_update.ps1"   # adaptez le chemin
+
+$action  = New-ScheduledTaskAction -Execute "PowerShell.exe" `
+             -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$trigger.Delay = "PT2M"
+$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+               -DontStopIfGoingOnBatteries -StartWhenAvailable
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" `
+               -LogonType ServiceAccount -RunLevel Highest
+
+Register-ScheduledTask -TaskName "AutoWindowsUpdate-AtStartup" `
+  -Action $action -Trigger $trigger -Settings $settings `
+  -Principal $principal -Force
+```
+
+</details>
 
 ---
 
