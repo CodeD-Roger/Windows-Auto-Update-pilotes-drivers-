@@ -82,21 +82,47 @@ Import-Module PSWindowsUpdate -Force
 # /AutoReboot:$false = jamais de redemarrage automatique
 # /AcceptAll        = accepte toutes les mises a jour sans confirmation
 # /Install          = telecharge et installe directement
-Get-WindowsUpdate `
+Write-Host "Recherche et installation des mises a jour Windows..." -ForegroundColor Cyan
+$resultWindows = Get-WindowsUpdate `
     -AcceptAll `
     -Install `
     -AutoReboot:$false `
     -MicrosoftUpdate `
-    -NotCategory "Language packs" `
-    | Out-Null
+    -NotCategory "Language packs"
 
 # ── Pilotes via Windows Update (categorie Drivers) ─────────
-Get-WindowsUpdate `
+Write-Host "Recherche et installation des pilotes..." -ForegroundColor Cyan
+$resultDrivers = Get-WindowsUpdate `
     -AcceptAll `
     -Install `
     -AutoReboot:$false `
-    -Category "Drivers" `
-    | Out-Null
+    -Category "Drivers"
+
+# ── Resume de ce qui a ete installe ────────────────────────
+$allResults = @($resultWindows) + @($resultDrivers) | Where-Object { $_ }
+
+Write-Host ""
+Write-Host "================ RESUME ================" -ForegroundColor Yellow
+
+if ($allResults.Count -eq 0) {
+    Write-Host "Aucune mise a jour n'etait disponible. Le systeme est deja a jour." -ForegroundColor Green
+} else {
+    Write-Host "$($allResults.Count) element(s) traite(s) :" -ForegroundColor Green
+    Write-Host ""
+    $allResults |
+        Select-Object @{N='Resultat'; E={ $_.Result }},
+                      @{N='KB';       E={ $_.KB }},
+                      @{N='Taille';   E={ $_.Size }},
+                      @{N='Titre';    E={ $_.Title }} |
+        Format-Table -AutoSize -Wrap | Out-Host
+
+    # Indique si un redemarrage est necessaire pour finaliser
+    if (Get-WURebootStatus -Silent) {
+        Write-Host "Un redemarrage est necessaire pour finaliser les mises a jour." -ForegroundColor Yellow
+    }
+}
+Write-Host "=======================================" -ForegroundColor Yellow
+Write-Host ""
 
 # ── Notification Windows a la fin ──────────────────────────
 Add-Type -AssemblyName System.Windows.Forms
