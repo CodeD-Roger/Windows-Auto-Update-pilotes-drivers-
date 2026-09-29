@@ -23,10 +23,12 @@ Script PowerShell qui automatise l'installation des mises à jour Windows et des
 - **Windows Update complet** — OS, sécurité, mises à jour Microsoft
 - **Pilotes** — mise à jour automatique via la catégorie Drivers
 - **Silencieux** — tourne en arrière-plan sans fenêtre pop-up
-- **Sans redémarrage forcé** — les mises à jour attendent le prochain redémarrage manuel
+- **Sans redémarrage forcé** — les mises à jour attendent le prochain **redémarrage** (avec le démarrage rapide de Windows, « Arrêter » puis rallumer ne suffit pas)
 - **Language packs exclus** — évite les téléchargements inutiles
-- **Notification Windows** — alerte visuelle à la fin du processus
-- **Lancement au démarrage** — option intégrée pour s'exécuter à chaque démarrage du PC
+- **Journal** — chaque exécution est consignée dans `C:\ProgramData\AutoWindowsUpdate\logs\` (30 derniers journaux)
+- **Notification** — bulle Windows, ou message aux sessions ouvertes quand le script tourne en tâche planifiée
+- **Erreurs signalées** — un échec est notifié, consigné, et le script sort avec le code 1
+- **Lancement automatique** — option intégrée : au démarrage et chaque jour à 12:00
 
 ---
 
@@ -43,8 +45,10 @@ Ou via le planificateur de tâches Windows pour une exécution automatique :
 
 ```powershell
 # Créer une tâche planifiée (exemple : tous les dimanches à 3h)
+# Le script doit être dans un dossier que seuls les administrateurs
+# peuvent modifier (ex. C:\Program Files\AutoWindowsUpdate\).
 $action  = New-ScheduledTaskAction -Execute "PowerShell.exe" `
-             -Argument "-ExecutionPolicy Bypass -File C:\Scripts\auto_update.ps1"
+             -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"C:\Program Files\AutoWindowsUpdate\auto_update.ps1`""
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3am
 $settings = New-ScheduledTaskSettingsSet -RunOnlyIfIdle -IdleDuration 00:10:00
 Register-ScheduledTask -TaskName "AutoWindowsUpdate" `
@@ -62,20 +66,24 @@ Pour que le script s'exécute **automatiquement à chaque démarrage du PC**, le
 .\auto_update.ps1 -RegisterStartup
 ```
 
-Cela crée une tâche planifiée nommée `AutoWindowsUpdate-AtStartup` qui :
+Cela copie le script dans `C:\Program Files\AutoWindowsUpdate\` et crée une tâche planifiée nommée `AutoWindowsUpdate-AtStartup` qui :
 
-- se déclenche **à chaque démarrage** de Windows ;
+- se déclenche **à chaque démarrage** (2 minutes après, pour ne pas ralentir l'ouverture de session) **et chaque jour à 12:00** — si le PC était éteint à midi, elle tourne dès qu'il est rallumé ;
 - s'exécute avec le compte **SYSTEM** (droits admin, **sans** ouverture de session ni mot de passe) ;
-- démarre **2 minutes après le boot** pour ne pas ralentir l'ouverture de session ;
+- attend qu'un réseau soit disponible, ne tourne qu'une fois à la fois, deux heures au plus ;
 - tourne **silencieusement** en arrière-plan.
 
-> ℹ️ Le chemin du script est enregistré tel quel au moment de la commande. Si vous déplacez `auto_update.ps1`, relancez `-RegisterStartup` depuis le nouvel emplacement.
+> 🔒 **Pourquoi Program Files ?** La tâche tourne en SYSTEM. Si elle lançait la copie de votre dossier Téléchargements, n'importe quel utilisateur du PC pourrait modifier ce fichier et faire exécuter ses propres commandes avec les pleins pouvoirs. Program Files n'est modifiable que par un administrateur. Pour mettre à jour le script, relancez simplement `-RegisterStartup` avec la nouvelle version.
+
+> ⚡ **Pourquoi un déclencheur quotidien ?** Avec le démarrage rapide (actif par défaut), « Arrêter » met le PC en veille prolongée : au rallumage, Windows ne considère pas qu'il a démarré, et une tâche « au démarrage » seule pourrait ne presque jamais tourner sur un portable.
 
 ### Désactiver le lancement au démarrage
 
 ```powershell
 .\auto_update.ps1 -UnregisterStartup
 ```
+
+Supprime la tâche et la copie de Program Files ; les journaux sont conservés.
 
 ### Vérifier / gérer la tâche
 
@@ -94,7 +102,7 @@ Vous pouvez aussi la retrouver dans le **Planificateur de tâches** Windows (`ta
 
 ```powershell
 # À lancer une fois en tant qu'Administrateur
-$scriptPath = "C:\Scripts\auto_update.ps1"   # adaptez le chemin
+$scriptPath = "C:\Program Files\AutoWindowsUpdate\auto_update.ps1"   # dossier réservé aux administrateurs
 
 $action  = New-ScheduledTaskAction -Execute "PowerShell.exe" `
              -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
@@ -119,8 +127,10 @@ Register-ScheduledTask -TaskName "AutoWindowsUpdate-AtStartup" `
 Le module **PSWindowsUpdate** est installé automatiquement s'il est absent :
 
 ```powershell
-Install-Module -Name PSWindowsUpdate -Force -Scope AllUsers
+Install-Module -Name PSWindowsUpdate -Repository PSGallery -Force -Scope AllUsers
 ```
+
+`-IgnoreReboot` est indispensable : sans lui, le module **demande** s'il faut redémarrer, et dans une tâche cachée personne ne répond.
 
 ---
 
@@ -128,10 +138,12 @@ Install-Module -Name PSWindowsUpdate -Force -Scope AllUsers
 
 ```
 1. Vérification des droits admin
-2. Installation automatique de PSWindowsUpdate si absent
-3. Get-WindowsUpdate -AcceptAll -Install -AutoReboot:$false
-4. Get-WindowsUpdate -Category "Drivers" -AutoReboot:$false
-5. Notification Windows balloon tip (8 secondes)
+2. Journal ouvert dans C:\ProgramData\AutoWindowsUpdate\logs\
+3. Installation de PSWindowsUpdate si absent (TLS 1.2 forcé)
+4. Get-WindowsUpdate -MicrosoftUpdate -UpdateType Software -AcceptAll -Install -IgnoreReboot
+5. Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver   -AcceptAll -Install -IgnoreReboot
+6. Résumé, état « redémarrage nécessaire »
+7. Notification : « Redémarrez » si besoin, ou l'échec et le chemin du journal
 ```
 
 ---
