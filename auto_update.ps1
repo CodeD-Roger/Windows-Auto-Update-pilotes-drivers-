@@ -68,6 +68,18 @@ $WingetExclusions = @(
     "Nvidia.PhysX"
 )
 
+# Pilotes Windows Update a ne PAS installer (expression reguliere sur le
+# titre, insensible a la casse). Ils sont MASQUES dans Windows Update :
+# ni le script ni Windows ne les installeront.
+# Ici : composants ASUS qui reinstallent Armoury Crate / MyASUS
+# (System Control Interface, Armoury Crate Control Interface, pilotes
+# souris/clavier ROG avec ArmouryCrateDownloadTool, extensions).
+# Titres vus : "ASUSTeK Computer Inc. Mouse Driver Update (1.0.72.0)",
+#              "ASUSTeK Computer Inc. - Keyboard - 1.0.25.0".
+# Le pave tactile et le firmware restent mis a jour.
+# Laisser vide ("") pour tout installer.
+$DriverExclusions = '^ASUSTeK .*\b(System|Mouse|Keyboard|Extension|SoftwareComponent)\b'
+
 # ── Activer le lancement automatique ───────────────────────
 if ($RegisterStartup) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -242,14 +254,26 @@ try {
         -MicrosoftUpdate `
         -UpdateType Software `
         -NotCategory "Language packs" `
-        -AcceptAll -Install -IgnoreReboot -ErrorAction Stop | Where-Object { $_ })
+        -AcceptAll -Install -IgnoreReboot -ErrorAction Stop | ForEach-Object { $_ } | Where-Object { $_ })
 
     # Pilotes publies par les fabricants via Windows Update
     Write-Step "Recherche et installation des pilotes..."
+    # Get-WindowsUpdate renvoie la liste en un seul objet :
+    # ForEach-Object { $_ } la deroule element par element.
+    if ($DriverExclusions) {
+        $excluded = @(Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver -ErrorAction Stop |
+            ForEach-Object { $_ } |
+            Where-Object { $_.Title -match $DriverExclusions })
+        if ($excluded) {
+            $excluded | ForEach-Object { Write-Host "Pilote masque : $($_.Title)" }
+            Get-WindowsUpdate -MicrosoftUpdate -UpdateID @($excluded | ForEach-Object { $_.Identity.UpdateID }) `
+                -Hide -AcceptAll -ErrorAction Stop | Out-Null
+        }
+    }
     $resultDrivers = @(Get-WindowsUpdate `
         -MicrosoftUpdate `
         -UpdateType Driver `
-        -AcceptAll -Install -IgnoreReboot -ErrorAction Stop | Where-Object { $_ })
+        -AcceptAll -Install -IgnoreReboot -ErrorAction Stop | ForEach-Object { $_ } | Where-Object { $_ })
 
     $allResults = $resultWindows + $resultDrivers
     if ($allResults.Count -eq 0) {
