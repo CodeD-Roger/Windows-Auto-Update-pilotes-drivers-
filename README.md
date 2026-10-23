@@ -14,21 +14,28 @@
 
 ## Description
 
-Script PowerShell qui automatise l'installation des mises à jour Windows et des pilotes en arrière-plan, sans redémarrage automatique. Les changements sont appliqués au prochain redémarrage manuel.
+Script PowerShell qui automatise l'installation des mises à jour Windows, des pilotes et des applications en arrière-plan, sans redémarrage automatique. Les changements système sont appliqués au prochain redémarrage manuel.
 
 ---
 
 ## Fonctionnalités
 
-- **Windows Update complet** — OS, sécurité, mises à jour Microsoft
-- **Pilotes** — mise à jour automatique via la catégorie Drivers
-- **Silencieux** — tourne en arrière-plan sans fenêtre pop-up
+- **Windows Update complet** — OS, sécurité, produits Microsoft
+- **Pilotes** — publiés par les fabricants via Windows Update
+- **Applications** — mise à jour via **winget**, installé automatiquement s'il est absent (paquet officiel `microsoft/winget-cli`, signature Microsoft vérifiée)
+- **Microsoft Store** — déclenche la mise à jour des applications du Store
+- **Microsoft 365** — mise à jour Click-to-Run, sans fermer Word/Outlook s'ils sont ouverts
+- **Defender** — mise à jour des signatures antivirus
+- **Exclusions winget** — liste `$WingetExclusions` en haut du script pour les applications à ne pas toucher
+- **Silencieux et discret** — aucune fenêtre, priorité CPU basse
 - **Sans redémarrage forcé** — les mises à jour attendent le prochain **redémarrage** (avec le démarrage rapide de Windows, « Arrêter » puis rallumer ne suffit pas)
 - **Language packs exclus** — évite les téléchargements inutiles
 - **Journal** — chaque exécution est consignée dans `C:\ProgramData\AutoWindowsUpdate\logs\` (30 derniers journaux)
-- **Notification** — bulle Windows, ou message aux sessions ouvertes quand le script tourne en tâche planifiée
-- **Erreurs signalées** — un échec est notifié, consigné, et le script sort avec le code 1
-- **Lancement automatique** — option intégrée : au démarrage et chaque jour à 12:00
+- **Message uniquement si nécessaire** — quand il faut redémarrer, ou quand une étape a échoué (code de sortie 1)
+- **Étapes indépendantes** — si une étape échoue, les suivantes s'exécutent quand même
+- **Lancement automatique** — option intégrée : au démarrage et à l'ouverture de session, une fois toutes les 20 h au plus
+
+> ℹ️ En compte SYSTEM, winget ne voit que les applications installées pour tous les utilisateurs. Les applications installées dans le profil (VS Code « User », GitHub Desktop…) gardent leur propre mise à jour automatique.
 
 ---
 
@@ -68,14 +75,14 @@ Pour que le script s'exécute **automatiquement à chaque démarrage du PC**, le
 
 Cela copie le script dans `C:\Program Files\AutoWindowsUpdate\` et crée une tâche planifiée nommée `AutoWindowsUpdate-AtStartup` qui :
 
-- se déclenche **à chaque démarrage** (2 minutes après, pour ne pas ralentir l'ouverture de session) **et chaque jour à 12:00** — si le PC était éteint à midi, elle tourne dès qu'il est rallumé ;
+- se déclenche **au démarrage et à l'ouverture de session** (2 minutes après, pour ne pas ralentir le PC), **une fois toutes les 20 h au plus** ;
 - s'exécute avec le compte **SYSTEM** (droits admin, **sans** ouverture de session ni mot de passe) ;
-- attend qu'un réseau soit disponible, ne tourne qu'une fois à la fois, deux heures au plus ;
-- tourne **silencieusement** en arrière-plan.
+- attend qu'un réseau soit disponible (5 min max), ne tourne qu'une fois à la fois, trois heures au plus ;
+- tourne **silencieusement** en arrière-plan, en priorité basse.
 
 > 🔒 **Pourquoi Program Files ?** La tâche tourne en SYSTEM. Si elle lançait la copie de votre dossier Téléchargements, n'importe quel utilisateur du PC pourrait modifier ce fichier et faire exécuter ses propres commandes avec les pleins pouvoirs. Program Files n'est modifiable que par un administrateur. Pour mettre à jour le script, relancez simplement `-RegisterStartup` avec la nouvelle version.
 
-> ⚡ **Pourquoi un déclencheur quotidien ?** Avec le démarrage rapide (actif par défaut), « Arrêter » met le PC en veille prolongée : au rallumage, Windows ne considère pas qu'il a démarré, et une tâche « au démarrage » seule pourrait ne presque jamais tourner sur un portable.
+> ⚡ **Pourquoi aussi à l'ouverture de session ?** Avec le démarrage rapide (actif par défaut), « Arrêter » met le PC en veille prolongée : au rallumage, Windows ne considère pas qu'il a démarré, et une tâche « au démarrage » seule pourrait ne presque jamais tourner. Le paramètre `-Scheduled`, passé par la tâche, évite de relancer les mises à jour à chaque session (20 h minimum entre deux exécutions). Lancé à la main, le script tourne toujours.
 
 ### Désactiver le lancement au démarrage
 
@@ -124,11 +131,10 @@ Register-ScheduledTask -TaskName "AutoWindowsUpdate-AtStartup" `
 
 ## Dépendances
 
-Le module **PSWindowsUpdate** est installé automatiquement s'il est absent :
+Installés automatiquement s'ils sont absents :
 
-```powershell
-Install-Module -Name PSWindowsUpdate -Repository PSGallery -Force -Scope AllUsers
-```
+- **PSWindowsUpdate** — depuis PSGallery
+- **winget** (App Installer) — dernière version de [microsoft/winget-cli](https://github.com/microsoft/winget-cli/releases), installée pour tous les utilisateurs après vérification de la signature Microsoft. `Repair-WinGetPackageManager` ne fonctionne pas sous Windows PowerShell 5.1, d'où cette méthode.
 
 `-IgnoreReboot` est indispensable : sans lui, le module **demande** s'il faut redémarrer, et dans une tâche cachée personne ne répond.
 
@@ -138,12 +144,16 @@ Install-Module -Name PSWindowsUpdate -Repository PSGallery -Force -Scope AllUser
 
 ```
 1. Vérification des droits admin
-2. Journal ouvert dans C:\ProgramData\AutoWindowsUpdate\logs\
-3. Installation de PSWindowsUpdate si absent (TLS 1.2 forcé)
-4. Get-WindowsUpdate -MicrosoftUpdate -UpdateType Software -AcceptAll -Install -IgnoreReboot
-5. Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver   -AcceptAll -Install -IgnoreReboot
-6. Résumé, état « redémarrage nécessaire »
-7. Notification : « Redémarrez » si besoin, ou l'échec et le chemin du journal
+2. -Scheduled : sortie immédiate si dernière exécution < 20 h
+3. Journal ouvert dans C:\ProgramData\AutoWindowsUpdate\logs\
+4. Attente du réseau (5 min max)
+5. Update-MpSignature                                       (Defender)
+6. Get-WindowsUpdate -MicrosoftUpdate -UpdateType Software -AcceptAll -Install -IgnoreReboot
+7. Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver   -AcceptAll -Install -IgnoreReboot
+8. OfficeC2RClient.exe /update                              (Microsoft 365)
+9. UpdateScanMethod                                         (Microsoft Store, en SYSTEM)
+10. winget upgrade --all --silent                           (applications)
+11. Résumé ; message seulement si redémarrage nécessaire ou échec
 ```
 
 ---
